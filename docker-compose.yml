@@ -1,0 +1,202 @@
+# -- Base snippets (YAML anchors) -------------------------------------
+x-postgres-base: &postgres-base
+  image: postgres:16
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U apilens"]
+    interval: 5s
+    timeout: 3s
+    retries: 15
+
+services:
+
+  # =============================================================
+  # DATABASES - one per service (database-per-service pattern)
+  # =============================================================
+  postgres-auth:
+    <<: *postgres-base
+    container_name: apilens-pg-auth
+    environment:
+      POSTGRES_DB: ${POSTGRES_AUTH_DB:-apilens_auth}
+      POSTGRES_USER: ${POSTGRES_AUTH_USER:-apilens}
+      POSTGRES_PASSWORD: ${POSTGRES_AUTH_PASSWORD:-apilens_dev}
+    ports:
+      - "5433:5432"
+    volumes:
+      - pg_auth:/var/lib/postgresql/data
+      - ./db/init-multi-db.sh:/docker-entrypoint-initdb.d/init-multi-db.sh:ro
+
+  postgres-files:
+    <<: *postgres-base
+    container_name: apilens-pg-files
+    environment:
+      POSTGRES_DB: ${POSTGRES_FILES_DB:-apilens_files}
+      POSTGRES_USER: ${POSTGRES_FILES_USER:-apilens}
+      POSTGRES_PASSWORD: ${POSTGRES_FILES_PASSWORD:-apilens_dev}
+    ports:
+      - "5435:5432"
+    volumes:
+      - pg_files:/var/lib/postgresql/data
+      - ./db/init-multi-db.sh:/docker-entrypoint-initdb.d/init-multi-db.sh:ro
+
+  postgres-prefs:
+    <<: *postgres-base
+    container_name: apilens-pg-prefs
+    environment:
+      POSTGRES_DB: ${POSTGRES_PREFS_DB:-apilens_prefs}
+      POSTGRES_USER: ${POSTGRES_PREFS_USER:-apilens}
+      POSTGRES_PASSWORD: ${POSTGRES_PREFS_PASSWORD:-apilens_dev}
+    ports:
+      - "5436:5432"
+    volumes:
+      - pg_prefs:/var/lib/postgresql/data
+      - ./db/init-multi-db.sh:/docker-entrypoint-initdb.d/init-multi-db.sh:ro
+
+  # =============================================================
+  # INFRA - shared
+  # =============================================================
+  redis:
+    image: redis:7-alpine
+    container_name: apilens-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: apilens-rabbit
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-apilens}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-apilens_dev}
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  # =============================================================
+  # SERVICES - Spring Boot (built from ./backend)
+  # =============================================================
+  auth-service:
+    build:
+      context: ./backend
+      dockerfile: auth-service/Dockerfile
+    container_name: apilens-auth
+    restart: unless-stopped
+    depends_on:
+      postgres-auth:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-auth:5432/${POSTGRES_AUTH_DB:-apilens_auth}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_AUTH_USER:-apilens}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_AUTH_PASSWORD:-apilens_dev}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ACCESS_TTL_SECONDS: ${JWT_ACCESS_TTL_SECONDS:-900}
+      JWT_REFRESH_TTL_SECONDS: ${JWT_REFRESH_TTL_SECONDS:-604800}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      EMAIL_CHANGE_MAX: ${EMAIL_CHANGE_MAX:-1}
+      EMAIL_CHANGE_WINDOW_HOURS: ${EMAIL_CHANGE_WINDOW_HOURS:-24}
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./db/migrations/auth:/app/db/migrations/auth:ro
+
+  file-service:
+    build:
+      context: ./backend
+      dockerfile: file-service/Dockerfile
+    container_name: apilens-files
+    restart: unless-stopped
+    depends_on:
+      postgres-files:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-files:5432/${POSTGRES_FILES_DB:-apilens_files}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_FILES_USER:-apilens}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_FILES_PASSWORD:-apilens_dev}
+      JWT_SECRET: ${JWT_SECRET}
+      APP_STORAGE_ROOT: /app/data/files
+    ports:
+      - "8084:8084"
+    volumes:
+      - ./db/migrations/files:/app/db/migrations/files:ro
+      - file_storage:/app/data/files
+
+  preferences-service:
+    build:
+      context: ./backend
+      dockerfile: preferences-service/Dockerfile
+    container_name: apilens-prefs
+    restart: unless-stopped
+    depends_on:
+      postgres-prefs:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-prefs:5432/${POSTGRES_PREFS_DB:-apilens_prefs}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_PREFS_USER:-apilens}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PREFS_PASSWORD:-apilens_dev}
+      JWT_SECRET: ${JWT_SECRET}
+    ports:
+      - "8085:8085"
+    volumes:
+      - ./db/migrations/prefs:/app/db/migrations/prefs:ro
+
+  gateway:
+    build:
+      context: ./backend
+      dockerfile: gateway/Dockerfile
+    container_name: apilens-gateway
+    restart: unless-stopped
+    depends_on:
+      - auth-service
+      - file-service
+      - preferences-service
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      JWT_SECRET: ${JWT_SECRET}
+      LOAD_TEST_KEY: ${LOAD_TEST_KEY:-loadtest_dev_bypass_key}
+      AUTH_SERVICE_URL: http://auth-service:8081
+      FILE_SERVICE_URL: http://file-service:8084
+      PREFS_SERVICE_URL: http://preferences-service:8085
+    ports:
+      - "8080:8080"
+
+  # =============================================================
+  # FRONTEND - React dev server (Vite)
+  # =============================================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: apilens-frontend
+    restart: unless-stopped
+    environment:
+      VITE_API_BASE_URL: /api
+    ports:
+      - "5173:5173"
+
+  # =============================================================
+  # NGINX - reverse proxy: /api -> gateway, / -> frontend
+  # =============================================================
+  nginx:
+    image: nginx:alpine
+    container_name: apilens-nginx
+    restart: unless-stopped
+    depends_on:
+      - gateway
+      - frontend
+    ports:
+      - "80:80"
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+
+volumes:
+  pg_auth:
+  pg_files:
+  pg_prefs:
+  file_storage:
