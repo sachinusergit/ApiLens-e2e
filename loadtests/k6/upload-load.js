@@ -13,12 +13,19 @@ const BASE = __ENV.BASE_URL || 'http://localhost:8080';
 const LOAD_KEY = __ENV.LOAD_TEST_KEY || '';
 
 export function setup() {
-  const res = http.post(
-    `${BASE}/api/auth/login`,
-    JSON.stringify({ email: 'ravi@example.com', password: 'Test@1234' }),
+  // Register a fresh user per run so this does not depend on demo credentials.
+  const id = `${Date.now()}${Math.floor(Math.random() * 1e6)}`;
+  const email = `k6_upload_${id}@example.com`;
+  const password = 'Test@1234';
+  const reg = http.post(
+    `${BASE}/api/auth/register`,
+    JSON.stringify({ email, password, name: 'k6 upload', orgName: 'k6 upload org' }),
     { headers: { 'Content-Type': 'application/json' } }
   );
-  return { token: res.json('accessToken') };
+  if (reg.status !== 201) {
+    throw new Error(`register failed: ${reg.status} ${reg.body}`);
+  }
+  return { token: reg.json('accessToken') };
 }
 
 export default function (data) {

@@ -21,6 +21,11 @@ export const options = {
 
 const BASE = __ENV.BASE_URL || 'http://localhost:8080';
 const LOAD_KEY = __ENV.LOAD_TEST_KEY || '';
+// Static account is intentional for load generation; override when the
+// seeded demo credentials have drifted (e.g. email changed via UI):
+//   k6 run -e DEMO_EMAIL=you@example.com -e DEMO_PASSWORD=... loadtests/k6/auth-load.js
+const EMAIL = __ENV.DEMO_EMAIL || 'ravi@example.com';
+const PASSWORD = __ENV.DEMO_PASSWORD || 'Test@1234';
 
 export default function () {
   const headers = { 'Content-Type': 'application/json' };
@@ -28,7 +33,7 @@ export default function () {
 
   const res = http.post(
     `${BASE}/api/auth/token`,
-    JSON.stringify({ email: 'ravi@example.com', password: 'Test@1234' }),
+    JSON.stringify({ email: EMAIL, password: PASSWORD }),
     { headers }
   );
 
