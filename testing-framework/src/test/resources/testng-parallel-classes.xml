@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE suite SYSTEM "https://testng.org/testng-1.0.dtd">
+<suite name="parallel-suite" parallel="classes" thread-count="5">
+
+    <test name="Auth Tests">
+        <classes>
+            <class name="com.apilens.qa.api.auth.LoginTest"/>
+            <class name="com.apilens.qa.api.auth.SignupTest"/>
+            <class name="com.apilens.qa.api.auth.ProfileTest"/>
+        </classes>
+    </test>
+
+    <test name="File Tests">
+        <classes>
+            <class name="com.apilens.qa.api.file.UploadTest"/>
+            <class name="com.apilens.qa.api.file.DownloadTest"/>
+            <class name="com.apilens.qa.api.file.SearchTest"/>
+        </classes>
+    </test>
+
+    <test name="Prefs Tests">
+        <classes>
+            <class name="com.apilens.qa.api.prefs.SliderTest"/>
+            <class name="com.apilens.qa.api.prefs.NotificationTest"/>
+        </classes>
+    </test>
+
+</suite>
